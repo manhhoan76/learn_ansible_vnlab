@@ -1,0 +1,117 @@
+---
+- name: Check docker installed
+  command: docker --version
+  register: docker_check
+  tags: check_docker_version
+  ignore_errors: yes
+
+- name: Install pre-requisite packages
+  become: yes
+  yum:
+   name: "{{item}}"
+   state: latest
+  loop:
+   - python*
+   - yum-utils
+   - device-mapper-persistent-data
+   - lvm2
+  when:
+    - docker_check.msg is defined
+    - docker_check.msg.find('No such file or directory') != -1
+
+- name: Add Docker CE repo
+  become: yes
+  get_url:
+   url: https://download.docker.com/linux/centos/docker-ce.repo
+   dest: /etc/yum.repos.d/docker-ce.repo
+  when:
+     - docker_check.msg is defined
+     - docker_check.msg.find('No such file or directory') != -1
+
+- name: Install Docker
+  become: yes
+  yum:
+    name: "{{item}}"
+  loop: 
+    - docker-ce
+    - docker-ce-cli
+    - containerd.io
+  when:
+     - docker_check.msg is defined
+     - docker_check.msg.find('No such file or directory') != -1
+
+- name: Start and enable the Docker daemon
+  systemd: name=docker state=restarted
+  become: yes
+
+- name: Check Nginx Installed
+  command: 'nginx -v'
+  register: nginx_check_exits
+  ignore_errors: yes
+
+- name: Install Nginx
+  yum:
+    name: "{{item}}"
+  loop:
+    - epel-release
+    - nginx
+  when: 
+    - nginx_check_exits.msg is defined
+    - nginx_check_exits.msg.find('No such file or directory') != -1
+
+- name: Check if Docker Compose is installed
+  become: yes
+  command: docker-compose --version
+  register: docker_compose_check
+  ignore_errors: yes
+
+- name: Download and install Docker Compose
+  become: yes
+  get_url:
+    url: https://github.com/docker/compose/releases/download/1.21.2/docker-compose-Linux-x86_64
+    dest: /usr/bin/docker-compose
+    mode: +x
+  when:
+    - docker_compose_check.msg is defined
+    - docker_compose_check.msg.find('No such file or directory') != -1
+
+- name: Create docker directory
+  file:
+    path: /vagrant_data/docker
+    state: directory
+    owner: vagrant
+    group: vagrant
+
+- name: Mount folder docker_context to client
+  synchronize:
+    src: docker_context
+    dest: /vagrant_data/docker
+
+- name: Mount folder config to client
+  synchronize:
+    src: config
+    dest: /vagrant_data/docker
+  notify: 
+    - restart nginx
+
+- name: Mount folder source to client
+  synchronize:
+    src: source
+    dest: /vagrant_data
+
+- name: Copy Docker Compose files
+  become: yes
+  copy:
+    src: files/{{ item }}
+    dest: /vagrant_data/docker/{{ item }}
+    owner: vagrant
+    group: vagrant
+  loop:
+    - docker-compose.yml
+    - .env
+
+- name: Run docker compose
+  become: yes
+  args:
+    chdir: /vagrant_data/docker
+  command: 'docker-compose up -d'

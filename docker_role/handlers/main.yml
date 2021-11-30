@@ -1,0 +1,4 @@
+---
+# handlers file for docker_role
+- name: restart nginx
+  service: name=nginx state=restarted 
